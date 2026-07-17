@@ -1,12 +1,14 @@
 """
-Rough Bergomi model: path simulation via direct discretized Volterra kernel sum.
+Rough Bergomi model: path simulation via direct discretized Volterra kernel sum,
+with antithetic variates for variance reduction at extreme strikes.
 Reference: Bayer, Friz, Gatheral (2016) "Pricing under rough volatility"
 """
 
 import numpy as np
 
 
-def simulate_rough_bergomi(H, eta, rho, xi0, n_steps, n_paths, T=1.0, seed=None):
+def simulate_rough_bergomi(H, eta, rho, xi0, n_steps, n_paths, T=1.0, seed=None,
+                            antithetic=True):
     """
     Simulate rough Bergomi price and variance paths.
 
@@ -17,9 +19,12 @@ def simulate_rough_bergomi(H, eta, rho, xi0, n_steps, n_paths, T=1.0, seed=None)
     rho : float, correlation between price and variance drivers, typically ~-0.7
     xi0 : float, flat forward variance level (constant curve for now)
     n_steps : int, number of time steps
-    n_paths : int, number of Monte Carlo paths
+    n_paths : int, number of Monte Carlo paths (rounded up to even if antithetic=True)
     T : float, time horizon in years
     seed : int, random seed for reproducibility
+    antithetic : bool, if True pairs each draw with its negation, halving the
+        independent draws needed and materially reducing variance at extreme
+        strikes/tails without extra compute cost.
 
     Returns
     -------
@@ -31,17 +36,22 @@ def simulate_rough_bergomi(H, eta, rho, xi0, n_steps, n_paths, T=1.0, seed=None)
     dt = T / n_steps
     t_grid = np.linspace(0, T, n_steps + 1)
 
-    # Correlated Gaussian increments: dW1 drives the variance kernel, dW1_perp is orthogonal
-    dW1 = np.random.normal(0.0, np.sqrt(dt), size=(n_paths, n_steps))
-    dW1_perp = np.random.normal(0.0, np.sqrt(dt), size=(n_paths, n_steps))
+    if antithetic:
+        n_half = (n_paths + 1) // 2
+        base1 = np.random.normal(0.0, np.sqrt(dt), size=(n_half, n_steps))
+        base_perp = np.random.normal(0.0, np.sqrt(dt), size=(n_half, n_steps))
+        dW1 = np.concatenate([base1, -base1], axis=0)[:n_paths]
+        dW1_perp = np.concatenate([base_perp, -base_perp], axis=0)[:n_paths]
+    else:
+        dW1 = np.random.normal(0.0, np.sqrt(dt), size=(n_paths, n_steps))
+        dW1_perp = np.random.normal(0.0, np.sqrt(dt), size=(n_paths, n_steps))
 
     # Volterra process: Y_{t_i} = sqrt(2H) * sum_{j<i} ((t_i - t_j))^(H-0.5) * dW1_j
-    # Direct O(n^2) discretization -- numerically stable, exact kernel, no overflow.
     norm = np.sqrt(2 * H)
     Y = np.zeros((n_paths, n_steps + 1))
     for i in range(1, n_steps + 1):
-        lags = (np.arange(i, 0, -1)) * dt          # (t_i - t_j) for j = 0..i-1, most recent last
-        kernel = lags ** (H - 0.5)                  # always > 0 since lags >= dt
+        lags = (np.arange(i, 0, -1)) * dt
+        kernel = lags ** (H - 0.5)
         Y[:, i] = norm * (dW1[:, :i] @ kernel)
 
     # Variance process

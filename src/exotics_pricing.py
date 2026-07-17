@@ -26,7 +26,6 @@ def price_barrier_rough_bergomi(H, eta, rho, xi0, spot, K, barrier, T,
     out = simulate_rough_bergomi(H, eta, rho, xi0, n_steps, n_paths, T=T, seed=seed)
     S = out["S"] * spot  # rescale, since simulator starts at S0=1
 
-    # knocked out if path ever touches/crosses the barrier
     knocked_out = (S <= barrier).any(axis=1)
     payoff = np.where(knocked_out, 0.0, np.maximum(S[:, -1] - K, 0.0))
     price = payoff.mean()
@@ -93,6 +92,12 @@ if __name__ == "__main__":
 
     print(f"\nSpot: {spot:.2f}, Strike (ATM): {K:.2f}, Barrier: {barrier:.2f}, T: {T:.3f}")
     print(f"BSM flat vol used (ATM implied vol): {atm_vol:.4f}")
+    # Sanity check: is xi0 (the model's flat variance level) actually consistent
+    # with the market's own ATM vol? If these are far apart, the variance swap
+    # divergence below is likely an artifact of xi0 being a poor proxy for
+    # realized variance, not a genuine finding about rough vol pricing.
+    print(f"Sanity check: ATM vol from smile = {atm_vol:.4f}, "
+          f"sqrt(xi0) = {np.sqrt(fit['xi0']):.4f}")
 
     print("\n--- Down-and-out barrier call ---")
     rb_price, rb_err = price_barrier_rough_bergomi(
